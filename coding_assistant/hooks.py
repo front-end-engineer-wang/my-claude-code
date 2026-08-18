@@ -1,8 +1,9 @@
 """Tool lifecycle hooks and host-owned permission policy."""
 
+import re
 import threading
 
-from .config import CONSOLE, WORKDIR, terminal_print
+from .config import CONSOLE, PERMISSION_MODE, WORKDIR, terminal_print
 
 HOOKS = {"UserPromptSubmit": [], "PreToolUse": [],
          "PostToolUse": [], "Stop": []}
@@ -20,8 +21,70 @@ def trigger_hooks(event: str, *args):
     return None
 
 
-DENY_LIST = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", "dd if="]
+ALWAYS_DENY_RULES = [
+    (re.compile(r"(?i)(?:^|[;&|]\s*)(?:sudo|runas)(?:\s|$)"),
+     "privilege escalation is not allowed"),
+    (re.compile(r"(?i)(?:^|[;&|]\s*)(?:shutdown|reboot|poweroff|halt)(?:\s|$)"),
+     "system power commands are not allowed"),
+    (re.compile(r"(?i)(?:^|[;&|]\s*)(?:mkfs(?:\.[a-z0-9]+)?|diskpart|format)(?:\s|$)"),
+     "disk formatting commands are not allowed"),
+    (re.compile(r"(?i)(?:^|[;&|]\s*)dd\s+[^;&|]*\bof="),
+     "raw disk writes are not allowed"),
+    (re.compile(r"rm\s+-[^\r\n]*r[^\r\n]*f[^\r\n]*(?:\s+/|\s+~)(?:\s|$)", re.IGNORECASE),
+     "recursive deletion of a root directory is not allowed"),
+    (re.compile(r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:"),
+     "process fork bombs are not allowed"),
+]
+
+FULL_MODE_CONFIRM_RULES = [
+    (re.compile(
+        r"(?i)(?:^|[;&|]\s*)(?:rm|rmdir|del|erase|rd|remove-item)(?:\s|$)"
+    ), "destructive file deletion requires request mode"),
+    (re.compile(r"(?i)\bgit\s+(?:reset\s+--hard|clean\s+-[^\s]*f|checkout\s+--|restore\s+)"),
+     "destructive Git recovery requires request mode"),
+    (re.compile(r"(?i)\b(?:powershell|pwsh)\b[^\r\n]*-(?:enc|encodedcommand)\b"),
+     "encoded PowerShell commands are not transparent enough for full mode"),
+    (re.compile(
+        r"(?i)(?:^|[;&|]\s*)(?:cd|chdir|pushd|set-location)\s+"
+        r"[\"']?(?:\.\.(?:[\\/]|(?=[\s\"']|$))|[a-z]:[\\/]|/|\\\\)"
+    ), "changing the shell outside the workspace requires request mode"),
+    (re.compile(
+        r"(?:^|\s)(?:>|>>|2>|2>>)\s*[\"']?"
+        r"(?:\.\.(?:[\\/]|(?=[\s\"']|$))|[a-zA-Z]:[\\/]|/|\\\\)"
+    ), "redirecting output outside the workspace requires request mode"),
+]
 mcp_tool_policies: dict[str, str] = {}
+
+
+def classify_bash_command(
+    command: str, mode: str | None = None
+) -> tuple[str, str | None]:
+    """Return (deny|confirm|allow, reason) for a shell command."""
+    mode = mode or PERMISSION_MODE
+    if not isinstance(command, str):
+        return "deny", "shell command must be a string"
+    if not command.strip():
+        return "deny", "shell command cannot be empty"
+    if "\0" in command:
+        return "deny", "shell command cannot contain NUL bytes"
+    if len(command) > 20_000:
+        return "deny", "shell command is too long"
+    normalized = re.sub(r"\s+", " ", command.strip())
+    for pattern, reason in ALWAYS_DENY_RULES:
+        if pattern.search(normalized):
+            return "deny", reason
+    if mode == "full":
+        for pattern, reason in FULL_MODE_CONFIRM_RULES:
+            if pattern.search(normalized):
+                return "confirm", reason
+        return "allow", None
+    return "confirm", "request mode requires approval"
+
+
+def validate_bash_command(command: str, mode: str | None = None) -> str | None:
+    """Return only permanent-denial reasons for compatibility with callers."""
+    action, reason = classify_bash_command(command, mode)
+    return reason if action == "deny" else None
 
 
 def permission_hook(block):
@@ -29,15 +92,19 @@ def permission_hook(block):
     # ask the user, or allow execution to continue.
     if block.name == "bash":
         command = block.input.get("command", "")
-        if not isinstance(command, str):
-            return "Permission denied: shell command must be a string"
-        for pattern in DENY_LIST:
-            if pattern in command:
-                return f"Permission denied: '{pattern}' is on the deny list"
+        action, reason = classify_bash_command(command)
+        if action == "deny":
+            return f"Permission denied: {reason}"
+        if action == "allow":
+            terminal_print(f"\033[90m[permission:auto] {command}\033[0m")
+            return None
         if threading.current_thread() is not threading.main_thread():
             return ("Permission denied: interactive shell approval is unavailable "
-                    "during an asynchronous turn")
-        terminal_print("\n\033[33m[permission] shell command\033[0m")
+                    f"during an asynchronous turn ({reason})")
+        label = "risky shell command" if PERMISSION_MODE == "full" else "shell command"
+        terminal_print(f"\n\033[33m[permission] {label}\033[0m")
+        if PERMISSION_MODE == "full" and reason:
+            terminal_print(f"  Safeguard: {reason}")
         terminal_print(f"  {command}")
         choice = CONSOLE.ask("  Allow? [y/N] ").strip().lower()
         if choice not in ("y", "yes"):
@@ -58,8 +125,17 @@ def permission_hook(block):
                 return "Permission denied: every patch path must be a string"
             if not (WORKDIR / path).resolve().is_relative_to(WORKDIR):
                 return f"Permission denied: path is outside the workspace: {path}"
-    if (block.name.startswith("mcp__")
-            and mcp_tool_policies.get(block.name, "confirm") != "allow"):
+    if block.name.startswith("mcp__"):
+        policy = mcp_tool_policies.get(block.name, "confirm")
+        if policy == "deny":
+            return f"Permission denied by host policy: {block.name}"
+        if policy == "allow":
+            return None
+        if PERMISSION_MODE == "full":
+            terminal_print(
+                f"\033[90m[permission:auto] MCP tool: {block.name}\033[0m"
+            )
+            return None
         if threading.current_thread() is not threading.main_thread():
             return ("Permission denied: interactive MCP approval is unavailable "
                     "during an asynchronous turn")

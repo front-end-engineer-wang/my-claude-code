@@ -14,7 +14,7 @@ from .hooks import trigger_hooks
 def main() -> None:
     config.CLI_ACTIVE = True
     start_runtime_services()
-    print("s15: integrated harness")
+    print(f"Permission mode: {config.PERMISSION_MODE}")
     print("Enter a question, press Enter to send. Type q to quit.\n")
     history = []
     context = update_context({}, [])

@@ -24,6 +24,24 @@ MODEL = os.environ["MODEL_ID"]
 PRIMARY_MODEL = MODEL
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL_ID")
 
+_PERMISSION_MODE_ALIASES = {
+    "1": "request",
+    "ask": "request",
+    "request": "request",
+    "request_approval": "request",
+    "2": "full",
+    "allow": "full",
+    "full": "full",
+    "full_approval": "full",
+}
+_permission_mode_value = os.getenv("PERMISSION_MODE", "request").strip().lower()
+if _permission_mode_value not in _PERMISSION_MODE_ALIASES:
+    allowed = "request or full"
+    raise ValueError(
+        f"Invalid PERMISSION_MODE={_permission_mode_value!r}; expected {allowed}"
+    )
+PERMISSION_MODE = _PERMISSION_MODE_ALIASES[_permission_mode_value]
+
 SKILLS_DIR = WORKDIR / "skills"
 TRANSCRIPT_DIR = WORKDIR / ".transcripts"
 TOOL_RESULTS_DIR = WORKDIR / ".task_outputs" / "tool-results"

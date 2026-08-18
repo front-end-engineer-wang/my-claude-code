@@ -139,7 +139,24 @@ if blocked:
 
 这样 permission、log、审计都可以挂在同一个 hook 点上。Lead、一次性 subagent 和队友的工具都会先经过 `PreToolUse`；允许执行的调用会在 handler 返回后触发 `PostToolUse`。
 
-权限判断不会把 MCP server 自己写的 description 当成授权依据。宿主维护一组精确的已知只读工具名单，其他 MCP 工具都要询问用户。文件工具越过 `WORKDIR` 会直接拒绝，每条 bash 命令执行前都会询问。只有前台用户轮次可以弹出交互确认；异步轮次直接拒绝需要确认的操作，不和主 CLI 争抢输入。
+权限判断不会把 MCP server 自己写的 description 当成授权依据。文件工具越过
+`WORKDIR` 始终拒绝，MCP 仍由宿主的 `allow` / `confirm` / `deny` 策略控制。
+
+通过 `.env` 中的 `PERMISSION_MODE` 选择两档权限：
+
+```dotenv
+# 默认模式：Bash 和 confirm 类型 MCP 工具逐次请求批准
+PERMISSION_MODE=request
+
+# 完全批准：普通命令不再询问，适合可信的个人开发环境
+PERMISSION_MODE=full
+```
+
+`full` 不会关闭安全底线。提权、关机、磁盘格式化、原始磁盘写入、根目录递归
+删除和 fork bomb 始终直接拒绝。普通删除、Git 强制清理、越界切换目录、越界
+重定向和编码后的 PowerShell 命令会回退到 `CONSOLE` 请求确认；只有普通命令
+自动批准。MCP 的 `deny` 策略也始终生效。静态命令检查不是操作系统沙箱，运行
+不可信代码时仍应使用容器或其他隔离环境。
 
 ### 计划与任务
 
