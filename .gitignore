@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.env
+
+# Runtime state
+.mailboxes/
+.memory/
+.scheduled_tasks.json
+.task_outputs/
+.tasks/
+.transcripts/
+.worktrees/
