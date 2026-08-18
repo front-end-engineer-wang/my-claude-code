@@ -38,7 +38,7 @@ def task_store_lock():
         depth = getattr(_task_store_state, "depth", 0)
         if depth == 0:
             TASKS_DIR.mkdir(parents=True, exist_ok=True)
-            handle = TASK_LOCK_PATH.open("a+")
+            handle = TASK_LOCK_PATH.open("a+", encoding="utf-8")
             lock_file(handle)
             _task_store_state.handle = handle
         _task_store_state.depth = depth + 1

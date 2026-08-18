@@ -24,20 +24,47 @@ def safe_path(path: str, cwd: Path | None = None) -> Path:
     return resolved
 
 
+def _read_text_file(path: Path) -> str:
+    """Read repository text as UTF-8, with a Windows legacy fallback."""
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("gb18030")
+
+
 _shell_processes: set[subprocess.Popen] = set()
 _shell_process_lock = threading.RLock()
 
 
 def _stop_process_group(process: subprocess.Popen):
-    """Stop processes that remain in the command's original process group."""
-    for sig in (signal.SIGTERM, signal.SIGKILL):
+    """Stop processes that remain in the command's original process group.
+
+    Cross-platform: ``os.killpg`` and ``signal.SIGKILL`` only exist on POSIX,
+    so on Windows we fall back to terminating the process directly.
+    """
+    if hasattr(os, "killpg"):
+        for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGKILL", None)):
+            if sig is None:
+                continue
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                return
+            except OSError:
+                return
+            time.sleep(0.05)
+    else:
         try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            return
+            process.terminate()
         except OSError:
-            return
+            pass
         time.sleep(0.05)
+        if process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
 
 
 def _stop_all_shell_processes():
@@ -62,7 +89,7 @@ def _run_bash_process(command: str, cwd: Path | None = None) -> tuple[str, int |
         process = subprocess.Popen(
             command, shell=True, cwd=cwd or WORKDIR,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, start_new_session=True,
+            text=True, errors="replace", start_new_session=True,
         )
         with _shell_process_lock:
             _shell_processes.add(process)
@@ -102,7 +129,7 @@ def run_read(path: str, limit: int | None = None,
              offset: int = 0, cwd: Path | None = None) -> str:
     try:
         file_path = safe_path(path, cwd)
-        lines = file_path.read_text().splitlines()
+        lines = _read_text_file(file_path).splitlines()
         offset = max(int(offset or 0), 0)
         limit = int(limit) if limit is not None else None
         lines = lines[offset:]
@@ -117,7 +144,7 @@ def run_write(path: str, content: str, cwd: Path | None = None) -> str:
     try:
         fp = safe_path(path, cwd)
         fp.parent.mkdir(parents=True, exist_ok=True)
-        fp.write_text(content)
+        fp.write_text(content, encoding="utf-8")
         return f"Wrote {len(content)} bytes to {path}"
     except Exception as e:
         return f"Error: {e}"
@@ -127,10 +154,10 @@ def run_edit(path: str, old_text: str, new_text: str,
              cwd: Path | None = None) -> str:
     try:
         fp = safe_path(path, cwd)
-        text = fp.read_text()
+        text = _read_text_file(fp)
         if old_text not in text:
             return f"Error: text not found in {path}"
-        fp.write_text(text.replace(old_text, new_text, 1))
+        fp.write_text(text.replace(old_text, new_text, 1), encoding="utf-8")
         return f"Edited {path}"
     except Exception as e:
         return f"Error: {e}"

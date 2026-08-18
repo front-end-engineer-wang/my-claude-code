@@ -1,32 +1,8 @@
 # s15: Agent Harness 集成 — 多种机制，一个循环
 
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md)
-
-s01 → ... → s13 → [s14](../s14_mcp_plugin/) → `s15` → [s16](../s16_workflow_runtime/) → s17
-
 > *"多种机制，一个循环"* — 工具、权限、记忆、任务、团队、插件都挂在同一个 while True 上。
 >
 > **Harness 层**: 集成 — 把本章示例实际使用的机制放进同一个可运行系统。
-
----
-
-## 问题
-
-前面的章节把不同机制放在各自独立的示例中。本章把集成运行时需要的机制接到一起。
-
-一个能长期工作的 coding agent 需要同时拥有：
-
-- 工具分发和权限边界
-- hooks 扩展点
-- todo 计划和任务图
-- 技能、记忆、系统 prompt 组装
-- 压缩和错误恢复
-- 后台任务和 cron 调度
-- 团队、协议和 idle 任务认领
-- 任务绑定的 worktree
-- MCP 外部工具接入
-
-S15 不再引入一个独立机制，而是展示现有机制从哪里进入模型循环，以及它们产生的事件如何回到同一段对话。
 
 ---
 
@@ -267,9 +243,3 @@ python s15_integrated_harness/code.py
 - 完成任务后是否在本轮剩余工具调用中保持 task `cwd`，并在 IDLE 时释放
 
 ---
-
-## 接下来
-
-[s16 Workflow Runtime](../s16_workflow_runtime/) 会在这个 host 中加入 `Workflow` 工具。Workflow 把固定的编排路径写在代码中，并记录运行进度，使同一次运行可以继续执行。
-
-<!-- translation-sync: zh@v13, en@v13, ja@v13 -->

@@ -75,7 +75,7 @@ def persist_large_output(tool_use_id: str, output: str) -> str:
     TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     path = TOOL_RESULTS_DIR / f"{tool_use_id}.txt"
     if not path.exists():
-        path.write_text(output)
+        path.write_text(output, encoding="utf-8")
     return (f"<persisted-output>\nFull output: {path}\n"
             f"Preview:\n{output[:2000]}\n</persisted-output>")
 
@@ -136,7 +136,7 @@ def micro_compact(messages: list) -> list:
 def write_transcript(messages: list) -> Path:
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
     path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
-    with path.open("w") as f:
+    with path.open("w", encoding="utf-8") as f:
         for msg in messages:
             f.write(json.dumps(msg, default=str) + "\n")
     return path
@@ -243,12 +243,3 @@ def is_prompt_too_long_error(e: Exception) -> bool:
     return (("prompt" in msg and "long" in msg)
             or "context_length_exceeded" in msg
             or "max_context_window" in msg)
-
-
-# -- Background Tasks --
-
-# Slow tools return a placeholder tool_result immediately. Their real output is
-# later injected as a task_notification, so the main loop can keep moving.
-_bg_counter = 0
-background_tasks: dict[str, dict] = {}
-background_results: dict[str, str] = {}

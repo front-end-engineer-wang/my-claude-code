@@ -48,7 +48,7 @@ def scan_skills():
             continue
         if not manifest.resolve().is_relative_to(skills_root):
             continue
-        raw = manifest.read_text()
+        raw = manifest.read_text(encoding="utf-8")
         meta, body = _parse_frontmatter(raw)
         raw_name = meta.get("name")
         name = raw_name.strip() if isinstance(raw_name, str) else ""

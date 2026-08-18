@@ -115,7 +115,7 @@ def save_durable_jobs():
     with cron_lock:
         durable = [asdict(job) for job in scheduled_jobs.values() if job.durable]
         temporary = DURABLE_PATH.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(durable, indent=2))
+        temporary.write_text(json.dumps(durable, indent=2), encoding="utf-8")
         os.replace(temporary, DURABLE_PATH)
 
 
@@ -123,7 +123,7 @@ def load_durable_jobs():
     if not DURABLE_PATH.exists():
         return
     try:
-        for item in json.loads(DURABLE_PATH.read_text()):
+        for item in json.loads(DURABLE_PATH.read_text(encoding="utf-8")):
             job = CronJob(**item)
             if not validate_cron(job.cron):
                 scheduled_jobs[job.id] = job

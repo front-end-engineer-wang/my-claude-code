@@ -5,6 +5,13 @@ import threading
 from .hooks import trigger_hooks
 from .tools import _agent_cwd, _format_bash_result, _run_bash_process
 
+# -- Background Tasks --
+
+# Slow tools return a placeholder tool_result immediately. Their real output is
+# later injected as a task_notification, so the main loop can keep moving.
+_bg_counter = 0
+background_tasks: dict[str, dict] = {}
+background_results: dict[str, str] = {}
 background_lock = threading.Lock()
 
 
