@@ -89,10 +89,10 @@ memory 的方式启动，而不是在导入阶段直接失败。
 
 ### 工具与分发
 
-内置工具池包含 25 个工具：
+内置工具池包含 27 个工具：
 
 ```text
-bash, read_file, write_file, edit_file, glob
+bash, read_file, write_file, edit_file, search_text, apply_patch, glob
 todo_write, task, load_skill, compact
 create_task, list_tasks, get_task, claim_task, complete_task
 schedule_cron, list_crons, cancel_cron
@@ -100,6 +100,21 @@ spawn_teammate, list_teammates, send_message
 request_shutdown, request_plan, review_plan
 create_worktree
 connect_mcp
+```
+
+`search_text` 优先使用 `rg`，不可用时自动回退到 Python 搜索：
+
+```json
+{"query": "agent_loop", "glob": "*.py", "case_sensitive": false, "max_results": 50}
+```
+
+`apply_patch` 先校验全部文件和 hunk，再提交多文件修改。任意上下文不匹配时
+不会写入任何文件，也可以传入 `expected_sha256` 防止修改已变化的文件：
+
+```json
+{"patches": [{"path": "app.py", "hunks": [
+  {"old_text": "old_call()", "new_text": "new_call()", "expected_occurrences": 1}
+]}]}
 ```
 
 `assemble_tool_pool()` 每轮组装：

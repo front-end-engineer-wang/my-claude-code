@@ -10,7 +10,8 @@ from .teams import (
     run_review_plan, spawn_teammate_thread, team_lock,
 )
 from .tools import (
-    run_agent_bash, run_agent_edit, run_agent_glob, run_agent_read,
+    APPLY_PATCH_TOOL, SEARCH_TEXT_TOOL, run_agent_apply_patch, run_agent_bash,
+    run_agent_edit, run_agent_glob, run_agent_read, run_agent_search_text,
     run_agent_write, run_todo_write,
 )
 
@@ -163,6 +164,8 @@ BUILTIN_TOOLS = [
      "input_schema": {"type": "object",
                       "properties": {"pattern": {"type": "string"}},
                       "required": ["pattern"]}},
+    SEARCH_TEXT_TOOL,
+    APPLY_PATCH_TOOL,
     {"name": "todo_write",
      "description": "Create and manage a task list for the current session.",
      "input_schema": {"type": "object",
@@ -290,6 +293,8 @@ BUILTIN_HANDLERS = {
     "write_file": run_agent_write,
     "edit_file": run_agent_edit,
     "glob": run_agent_glob,
+    "search_text": run_agent_search_text,
+    "apply_patch": run_agent_apply_patch,
     "todo_write": run_todo_write, "task": spawn_subagent,
     "load_skill": load_skill,
     "create_task": run_create_task, "list_tasks": run_list_tasks,

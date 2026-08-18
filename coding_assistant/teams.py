@@ -18,7 +18,10 @@ from .tasks import (
     release_teammate_assignment, task_lock, task_worktree_cwd,
     teammate_assignments,
 )
-from .tools import call_tool_handler, run_bash, run_edit, run_glob, run_read, run_write
+from .tools import (
+    APPLY_PATCH_TOOL, SEARCH_TEXT_TOOL, call_tool_handler, run_apply_patch,
+    run_bash, run_edit, run_glob, run_read, run_search_text, run_write,
+)
 
 MAILBOX_DIR = WORKDIR / ".mailboxes"
 MAILBOX_ROOT = MAILBOX_DIR.resolve()
@@ -220,7 +223,7 @@ def current_work_identity(owner: str) -> tuple[int, str | None]:
 
 def _run_teammate_tool(name: str, block, handlers: dict) -> str:
     gate = plan_gates.get(name, "not_required")
-    if (block.name in {"bash", "write_file", "edit_file"}
+    if (block.name in {"bash", "write_file", "edit_file", "apply_patch"}
             and gate not in {"not_required", "approved"}):
         return f"Blocked: plan status is {gate}."
     blocked = trigger_hooks("PreToolUse", block)
@@ -329,7 +332,7 @@ def spawn_teammate_thread(name: str, role: str, prompt: str,
               "call claim_task for it again. "
               "The runtime runs every filesystem tool in the claimed task's "
               "working directory. When asked for a plan, submit it before "
-              "bash, write_file, or edit_file and wait for approval. The runtime "
+              "bash, write_file, edit_file, or apply_patch and wait for approval. The runtime "
               "delivers your final text to Lead. Use send_message only for "
               "intermediate coordination, and address the coordinator as 'lead'.")
 
@@ -393,6 +396,18 @@ def spawn_teammate_thread(name: str, role: str, prompt: str,
             cwd, error = current_cwd()
             return error or run_glob(pattern, cwd=cwd)
 
+        def _run_search_text(query: str, glob: str | None = None,
+                             case_sensitive: bool = False,
+                             max_results: int = 100) -> str:
+            cwd, error = current_cwd()
+            return error or run_search_text(
+                query, glob, case_sensitive, max_results, cwd
+            )
+
+        def _run_apply_patch(patches: list[dict]) -> str:
+            cwd, error = current_cwd()
+            return error or run_apply_patch(patches, cwd)
+
         def _run_list_tasks():
             tasks = list_tasks()
             if not tasks:
@@ -427,7 +442,8 @@ def spawn_teammate_thread(name: str, role: str, prompt: str,
             )
         if require_plan:
             initial_prompt += ("\n\n[Plan required] Submit a plan and wait for "
-                               "Lead approval before bash, write_file, or edit_file.")
+                               "Lead approval before bash, write_file, edit_file, "
+                               "or apply_patch.")
         messages = [{"role": "user", "content": initial_prompt}]
         sub_tools = [
             {"name": "bash", "description": "Run a shell command.",
@@ -458,6 +474,8 @@ def spawn_teammate_thread(name: str, role: str, prompt: str,
                               "properties": {
                                   "pattern": {"type": "string"}},
                               "required": ["pattern"]}},
+            SEARCH_TEXT_TOOL,
+            APPLY_PATCH_TOOL,
             {"name": "send_message",
              "description": "Send an intermediate message to 'lead' or an active teammate.",
              "input_schema": {"type": "object",
@@ -489,6 +507,8 @@ def spawn_teammate_thread(name: str, role: str, prompt: str,
             "bash": _run_bash, "read_file": _run_read,
             "write_file": _run_write, "edit_file": _run_edit,
             "glob": _run_glob,
+            "search_text": _run_search_text,
+            "apply_patch": _run_apply_patch,
             "send_message": lambda to, content: _teammate_send_message(
                 name, to, content),
             "submit_plan": lambda plan: _teammate_submit_plan(name, plan),

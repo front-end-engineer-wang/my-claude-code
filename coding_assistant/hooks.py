@@ -48,6 +48,16 @@ def permission_hook(block):
             return "Permission denied: path must be a string"
         if not (WORKDIR / path).resolve().is_relative_to(WORKDIR):
             return "Permission denied: path is outside the workspace"
+    if block.name == "apply_patch":
+        patches = block.input.get("patches")
+        if not isinstance(patches, list):
+            return "Permission denied: patches must be a list"
+        for patch in patches:
+            path = patch.get("path") if isinstance(patch, dict) else None
+            if not isinstance(path, str):
+                return "Permission denied: every patch path must be a string"
+            if not (WORKDIR / path).resolve().is_relative_to(WORKDIR):
+                return f"Permission denied: path is outside the workspace: {path}"
     if (block.name.startswith("mcp__")
             and mcp_tool_policies.get(block.name, "confirm") != "allow"):
         if threading.current_thread() is not threading.main_thread():

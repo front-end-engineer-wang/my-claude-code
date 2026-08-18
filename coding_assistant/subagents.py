@@ -2,7 +2,10 @@
 
 from .config import MODEL, WORKDIR, client
 from .hooks import trigger_hooks
-from .tools import call_tool_handler, run_bash, run_edit, run_glob, run_read, run_write
+from .tools import (
+    APPLY_PATCH_TOOL, SEARCH_TEXT_TOOL, call_tool_handler, run_apply_patch,
+    run_bash, run_edit, run_glob, run_read, run_search_text, run_write,
+)
 
 SUB_SYSTEM = (
     f"You are a coding subagent at {WORKDIR}. "
@@ -37,6 +40,8 @@ SUB_TOOLS = [
      "input_schema": {"type": "object",
                       "properties": {"pattern": {"type": "string"}},
                       "required": ["pattern"]}},
+    SEARCH_TEXT_TOOL,
+    APPLY_PATCH_TOOL,
 ]
 
 
@@ -44,6 +49,7 @@ SUB_HANDLERS = {
     "bash": run_bash, "read_file": run_read,
     "write_file": run_write, "edit_file": run_edit,
     "glob": run_glob,
+    "search_text": run_search_text, "apply_patch": run_apply_patch,
 }
 
 
