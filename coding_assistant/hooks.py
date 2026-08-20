@@ -4,6 +4,7 @@ import re
 import threading
 
 from .config import CONSOLE, PERMISSION_MODE, WORKDIR, terminal_print
+from .workspace import current_workdir
 
 HOOKS = {"UserPromptSubmit": [], "PreToolUse": [],
          "PostToolUse": [], "Stop": []}
@@ -113,7 +114,7 @@ def permission_hook(block):
         path = block.input.get("path", "")
         if not isinstance(path, str):
             return "Permission denied: path must be a string"
-        if not (WORKDIR / path).resolve().is_relative_to(WORKDIR):
+        if not (current_workdir() / path).resolve().is_relative_to(current_workdir()):
             return "Permission denied: path is outside the workspace"
     if block.name == "apply_patch":
         patches = block.input.get("patches")
@@ -123,7 +124,7 @@ def permission_hook(block):
             path = patch.get("path") if isinstance(patch, dict) else None
             if not isinstance(path, str):
                 return "Permission denied: every patch path must be a string"
-            if not (WORKDIR / path).resolve().is_relative_to(WORKDIR):
+            if not (current_workdir() / path).resolve().is_relative_to(current_workdir()):
                 return f"Permission denied: path is outside the workspace: {path}"
     if block.name.startswith("mcp__"):
         policy = mcp_tool_policies.get(block.name, "confirm")
@@ -159,7 +160,7 @@ def large_output_hook(block, output):
 
 
 def user_prompt_hook(query: str):
-    print(f"\033[90m[HOOK] UserPromptSubmit: {WORKDIR}\033[0m")
+    print(f"\033[90m[HOOK] UserPromptSubmit: {current_workdir()}\033[0m")
     return None
 
 

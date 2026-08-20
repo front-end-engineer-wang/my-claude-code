@@ -8,13 +8,12 @@ from .background import (
     start_background_task,
 )
 from .compaction import (
-    RecoveryState, block_type, compact_history, estimate_size,
-    is_prompt_too_long_error, micro_compact, reactive_compact, snip_compact,
-    tool_result_budget, with_retry,
+    RecoveryState, block_type, compact_history, is_prompt_too_long_error,
+    proactive_compact, reactive_compact, tool_result_budget, with_retry,
 )
 from .config import (
     CONTEXT_LIMIT, CONTINUATION_PROMPT, DEFAULT_MAX_TOKENS,
-    ESCALATED_MAX_TOKENS, MAX_RECOVERY_RETRIES, client, terminal_print,
+    ESCALATED_MAX_TOKENS, MAX_RECOVERY_RETRIES, terminal_print,
 )
 from .cron import (
     CronJob, acknowledge_cron_jobs, consume_cron_queue, cron_lock, cron_queue,
@@ -23,12 +22,23 @@ from .cron import (
 from .hooks import trigger_hooks
 from .memory import MEMORY_RUNTIME
 from .mcp import mcp_clients
+from .llm import call_message, llm_context
 from .registry import assemble_tool_pool
-from .skills import assemble_system_prompt
+from .skills import assemble_system_prompt_parts
 from .subagents import has_tool_use
 from .tasks import release_completed_assignment
 from .teams import active_teammates, consume_lead_inbox, format_team_events
 from .tools import call_tool_handler
+
+
+def _emit_trace(callback, event_type: str, payload: dict):
+    """Tracing must never change agent behavior if the UI recorder fails."""
+    if callback is None:
+        return
+    try:
+        callback(event_type, payload)
+    except Exception as exc:
+        terminal_print(f"[trace] recorder error: {type(exc).__name__}: {exc}")
 
 # -- Context --
 
@@ -53,14 +63,23 @@ rounds_since_todo = 0
 agent_lock = threading.Lock()
 
 
-def prepare_context(messages: list, active_request: str) -> list:
+def prepare_context(messages: list, active_request: str, *,
+                    session_id: str | None = None, trace_callback=None) -> list:
     # Every LLM turn enters through the same context budget pipeline.
     messages[:] = tool_result_budget(messages)
-    messages[:] = snip_compact(messages)
-    messages[:] = micro_compact(messages)
-    if estimate_size(messages) > CONTEXT_LIMIT:
-        messages[:] = compact_history(messages, active_request)
+    messages[:] = proactive_compact(
+        messages, active_request, CONTEXT_LIMIT, session_id=session_id,
+        trace_callback=trace_callback,
+    )
     return messages
+
+def tool_intent_text(active_request: str, messages: list) -> str:
+    """Build a bounded local classifier input from the request and recent events."""
+    recent = []
+    for message in messages[-8:]:
+        content = str(message.get("content", ""))
+        recent.append(content[:2000])
+    return "\n".join([str(active_request), *recent])
 
 
 def build_user_content(results: list[dict]) -> list[dict]:
@@ -80,21 +99,28 @@ def inject_background_notifications(messages: list):
 
 
 def call_llm(messages: list, context: dict, tools: list,
-             state: RecoveryState, max_tokens: int):
-    system = assemble_system_prompt(context)
-    return with_retry(
-        lambda: client.messages.create(
-            model=state.current_model,
-            system=system,
-            messages=messages,
-            tools=tools,
-            max_tokens=max_tokens),
-        state)
+             state: RecoveryState, max_tokens: int, trace_callback=None,
+             session_id: str | None = None):
+    tool_names = [tool.get("name", "") for tool in tools]
+    prompt = assemble_system_prompt_parts(context, tool_names)
+    return call_message(
+        model=lambda: state.current_model,
+        stable_system=prompt["stable"],
+        semi_stable_system=prompt["semi_stable"],
+        dynamic_system=prompt["dynamic"],
+        messages=messages,
+        tools=tools,
+        max_tokens=max_tokens,
+        call_type="agent",
+        session_id=session_id,
+        retry=lambda invoke: with_retry(invoke, state),
+        trace_callback=trace_callback,
+    )
 
-
-def agent_loop(messages: list, context: dict, active_request: str):
+def _agent_loop_impl(messages: list, context: dict, active_request: str,
+                     trace_callback=None, session_id: str | None = None):
     global rounds_since_todo
-    tools, handlers = assemble_tool_pool()
+    tools, handlers = assemble_tool_pool(tool_intent_text(active_request, messages))
     state = RecoveryState()
     max_tokens = DEFAULT_MAX_TOKENS
 
@@ -120,15 +146,19 @@ def agent_loop(messages: list, context: dict, active_request: str):
                              "content": "<reminder>Update your todos.</reminder>"})
             rounds_since_todo = 0
 
-        prepare_context(messages, active_request)
+        prepare_context(messages, active_request, session_id=session_id,
+                        trace_callback=trace_callback)
         context = update_context(context, messages)
-        tools, handlers = assemble_tool_pool()
+        tools, handlers = assemble_tool_pool(tool_intent_text(active_request, messages))
 
         try:
-            response = call_llm(messages, context, tools, state, max_tokens)
+            response = call_llm(messages, context, tools, state, max_tokens,
+                                trace_callback, session_id)
         except Exception as e:
             if is_prompt_too_long_error(e) and not state.has_attempted_reactive_compact:
-                messages[:] = reactive_compact(messages, active_request)
+                messages[:] = reactive_compact(
+                    messages, active_request, session_id=session_id,
+                    trace_callback=trace_callback)
                 state.has_attempted_reactive_compact = True
                 continue
             restore_cron_jobs(unacknowledged_cron_jobs)
@@ -171,19 +201,23 @@ def agent_loop(messages: list, context: dict, active_request: str):
             print(f"\033[36m> {block.name}\033[0m")
 
             if block.name == "compact":
+                _emit_trace(trace_callback, "tool_call", {"name": block.name, "id": block.id, "input": block.input})
                 results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
                     "content": "[Compaction requested. This completed turn will be summarized.]",
                 })
                 compact_requested = True
+                _emit_trace(trace_callback, "tools_result", {"tool_use_id": block.id, "name": block.name, "content": "[Compaction requested. This completed turn will be summarized.]"})
                 continue
 
+            _emit_trace(trace_callback, "tool_call", {"name": block.name, "id": block.id, "input": block.input})
             blocked = trigger_hooks("PreToolUse", block)
             if blocked:
                 results.append({"type": "tool_result",
                                 "tool_use_id": block.id,
                                 "content": str(blocked)})
+                _emit_trace(trace_callback, "tools_result", {"tool_use_id": block.id, "name": block.name, "content": str(blocked), "blocked": True})
                 continue
 
             if should_run_background(block.name, block.input):
@@ -197,6 +231,7 @@ def agent_loop(messages: list, context: dict, active_request: str):
                 results.append({"type": "tool_result",
                                 "tool_use_id": block.id,
                                 "content": output})
+                _emit_trace(trace_callback, "tools_result", {"tool_use_id": block.id, "name": block.name, "content": output, "background": True})
                 continue
 
             handler = handlers.get(block.name)
@@ -211,10 +246,21 @@ def agent_loop(messages: list, context: dict, active_request: str):
 
             results.append({"type": "tool_result",
                             "tool_use_id": block.id, "content": output})
+            _emit_trace(trace_callback, "tools_result", {"tool_use_id": block.id, "name": block.name, "input": block.input, "content": output})
 
         messages.append({"role": "user", "content": build_user_content(results)})
         if compact_requested:
-            messages[:] = compact_history(messages, active_request)
+            messages[:] = compact_history(
+                messages, active_request, session_id=session_id,
+                trace_callback=trace_callback)
+
+
+def agent_loop(messages: list, context: dict, active_request: str,
+               trace_callback=None, session_id: str | None = None):
+    with llm_context(session_id, trace_callback):
+        return _agent_loop_impl(
+            messages, context, active_request, trace_callback, session_id
+        )
 
 
 def print_turn_assistants(messages: list, turn_start: int):

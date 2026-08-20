@@ -15,15 +15,65 @@ from .tools import (
     run_agent_write, run_todo_write,
 )
 
-def assemble_tool_pool() -> tuple[list[dict], dict]:
-    """Merge builtin tools + all MCP tools into one pool."""
+CORE_TOOL_NAMES = {
+    "bash", "read_file", "write_file", "edit_file", "glob", "search_text",
+    "apply_patch", "todo_write", "load_skill", "compact", "connect_mcp",
+}
+TASK_TOOL_NAMES = {
+    "task", "create_task", "list_tasks", "get_task", "claim_task",
+    "complete_task",
+}
+CRON_TOOL_NAMES = {"schedule_cron", "list_crons", "cancel_cron"}
+TEAM_TOOL_NAMES = {
+    "spawn_teammate", "list_teammates", "send_message", "request_shutdown",
+    "request_plan", "review_plan", "create_worktree",
+}
+
+TASK_KEYWORDS = (
+    "task", "任务", "计划", "依赖", "worktree", "subagent", "delegate",
+    "delegation", "子代理",
+)
+CRON_KEYWORDS = ("cron", "定时", "schedule", "scheduled", "调度")
+TEAM_KEYWORDS = (
+    "teammate", "team", "团队", "并行", "协作", "parallel", "multi-agent",
+)
+
+
+def select_tool_names(intent_text: str = "") -> set[str]:
+    """Select deterministic tool groups without spending an LLM request."""
+    normalized = str(intent_text or "").casefold()
+    selected = set(CORE_TOOL_NAMES)
+    if any(keyword in normalized for keyword in TASK_KEYWORDS):
+        selected.update(TASK_TOOL_NAMES)
+    if any(keyword in normalized for keyword in CRON_KEYWORDS):
+        selected.update(CRON_TOOL_NAMES)
+    if any(keyword in normalized for keyword in TEAM_KEYWORDS):
+        selected.update(TEAM_TOOL_NAMES)
+        selected.update(TASK_TOOL_NAMES)
+    return selected
+
+
+def assemble_tool_pool(intent_text: str = "", *, include_all: bool = False
+                       ) -> tuple[list[dict], dict]:
+    """Merge selected built-ins and relevant MCP tools in a stable order."""
     from . import hooks
-    tools = list(BUILTIN_TOOLS)
-    handlers = dict(BUILTIN_HANDLERS)
+
+    selected = ({tool["name"] for tool in BUILTIN_TOOLS}
+                if include_all else select_tool_names(intent_text))
+    tools = [tool for tool in BUILTIN_TOOLS if tool["name"] in selected]
+    handlers = {name: BUILTIN_HANDLERS[name]
+                for name in (tool["name"] for tool in tools)
+                if name in BUILTIN_HANDLERS}
     policies: dict[str, str] = {}
     origins = {tool["name"]: f"built-in tool {tool['name']!r}"
                for tool in tools}
-    for server_name, mcp_client in mcp_clients.items():
+    normalized_intent = str(intent_text or "").casefold()
+
+    for server_name in sorted(mcp_clients):
+        # MCP schemas are only sent when the task names the connected server.
+        if not include_all and server_name.casefold() not in normalized_intent:
+            continue
+        mcp_client = mcp_clients[server_name]
         safe_server = normalize_mcp_name(server_name)
         for tool_def in mcp_client.tools:
             raw_name = tool_def["name"]
@@ -57,7 +107,6 @@ def assemble_tool_pool() -> tuple[list[dict], dict]:
             )
     hooks.mcp_tool_policies = policies
     return tools, handlers
-
 # -- Lead Worktree Tools --
 
 def run_create_worktree(name: str, task_id: str) -> str:

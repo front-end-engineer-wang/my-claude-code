@@ -15,3 +15,6 @@ dist/
 .tasks/
 .transcripts/
 .worktrees/
+
+.token_usage/
+.web_sessions/

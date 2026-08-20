@@ -1,18 +1,12 @@
 """One-shot isolated subagent execution."""
 
-from .config import MODEL, WORKDIR, client
+from .config import MODEL, WORKDIR
 from .hooks import trigger_hooks
+from .llm import call_message
 from .tools import (
     APPLY_PATCH_TOOL, SEARCH_TEXT_TOOL, call_tool_handler, run_apply_patch,
     run_bash, run_edit, run_glob, run_read, run_search_text, run_write,
 )
-
-SUB_SYSTEM = (
-    f"You are a coding subagent at {WORKDIR}. "
-    "Complete the task, then return a concise final summary. "
-    "Do not spawn more agents."
-)
-
 
 SUB_TOOLS = [
     {"name": "bash", "description": "Run a shell command.",
@@ -72,9 +66,18 @@ def has_tool_use(content) -> bool:
 def spawn_subagent(description: str) -> str:
     messages = [{"role": "user", "content": description}]
     for _ in range(30):
-        response = client.messages.create(
-            model=MODEL, system=SUB_SYSTEM, messages=messages,
-            tools=SUB_TOOLS, max_tokens=8000)
+        response = call_message(
+            model=MODEL,
+            stable_system=(
+                "You are a coding subagent. Complete the assigned task, then "
+                "return a concise final summary. Do not spawn more agents."
+            ),
+            semi_stable_system=f"Working directory: {WORKDIR}",
+            messages=messages,
+            tools=SUB_TOOLS,
+            max_tokens=8000,
+            call_type="subagent",
+        )
         messages.append({"role": "assistant", "content": response.content})
         if not has_tool_use(response.content):
             break

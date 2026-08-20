@@ -10,8 +10,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import MODEL, WORKDIR, client
+from .config import MODEL, WORKDIR
 from .hooks import trigger_hooks
+from .llm import call_message, current_llm_context, llm_context
 from .tasks import (
     Task, _owner_in_progress, assignment_cwd, assignment_versions, can_start,
     claim_task, complete_task, list_tasks, load_task, release_completed_assignment,
@@ -528,9 +529,19 @@ def spawn_teammate_thread(name: str, role: str, prompt: str,
             with team_lock:
                 active_teammates[name] = "working"
             try:
-                response = client.messages.create(
-                    model=MODEL, system=system, messages=messages,
-                    tools=sub_tools, max_tokens=8000)
+                response = call_message(
+                    model=MODEL,
+                    stable_system=(
+                        "You are a persistent coding teammate. Use tools to "
+                        "complete assigned tasks, follow plan approval gates, and "
+                        "send concise results to the Lead."
+                    ),
+                    semi_stable_system=system,
+                    messages=messages,
+                    tools=sub_tools,
+                    max_tokens=8000,
+                    call_type="teammate",
+                )
             except Exception as exc:
                 BUS.send(name, "lead",
                          f"{type(exc).__name__}: {exc}", "error")
@@ -593,9 +604,12 @@ def spawn_teammate_thread(name: str, role: str, prompt: str,
                       f"{task.id}: {task.subject}\033[0m")
                 break
 
+    parent_session_id, parent_trace = current_llm_context()
+
     def run():
         try:
-            run_loop()
+            with llm_context(parent_session_id or f"teammate:{name}", parent_trace):
+                run_loop()
         except Exception as exc:
             try:
                 BUS.send(name, "lead", f"{type(exc).__name__}: {exc}", "error")

@@ -1,10 +1,39 @@
-# s15: Agent Harness 集成 — 多种机制，一个循环
+# 项目介绍
+本项目基于learn-claude-code的s15 integrated_harness 
+https://github.com/shareAI-lab/learn-claude-code
+
+由于项目距离真正的生产级别的coding agent还有很大距离，所以此项目是在learn-claude-code的基础上，完善学习。
+目标：生产级的coding工具
+
+新增功能
+1. web ui页面，增加了web的交互，启动命令： python -m coding_assistant.web --host 127.0.0.1 --port 8787
+2. 调用链路，可以查看每次 call_llm 的完整输入、模型响应和 tools_result。
+
+# Agent Harness 集成 — 多种机制，一个循环
 
 > *"多种机制，一个循环"* — 工具、权限、记忆、任务、团队、插件都挂在同一个 while True 上。
 >
 > **Harness 层**: 集成 — 把本章示例实际使用的机制放进同一个可运行系统。
 
 ---
+
+## 浏览器对话工作台
+
+除了 CLI 交互外，现在可以启动一个本地浏览器页面：
+
+```bash
+python -m coding_assistant.web --host 127.0.0.1 --port 8787
+# 或安装项目后：coding-assistant-web
+```
+
+打开 `http://127.0.0.1:8787` 后可以：
+
+- 在左侧查看历史对话，并新建多个独立会话；
+- 为每个会话设置工作目录，文件工具会在该目录内执行；
+- 在“调试 Trace”标签中查看每次模型调用的 prompt hash、工具集合、token、缓存指标和响应；
+- 查看每个工具调用及对应的 `tools_result`，包括阻止、后台任务和错误信息。
+
+会话与调试记录保存到工作区的 `.web_sessions/` 目录，采用 JSON 文件存储，方便备份和排查问题。网页端的会话运行在后台线程中，发送消息后页面会自动刷新状态。
 
 ## 解决方案
 
@@ -275,3 +304,16 @@ python s15_integrated_harness/code.py
 - 完成任务后是否在本轮剩余工具调用中保持 task `cwd`，并在 IDLE 时释放
 
 ---
+
+
+## Token 与 Prompt Cache 优化
+
+运行时现在通过统一的 LLM 调用层记录 token 使用量，并优先使用 Anthropic Prompt Caching：
+
+- 固定 system 指令和稳定工具 schema 形成缓存前缀；动态 memory、teammate 状态和工具结果位于缓存断点之后；
+- 普通编码请求只暴露核心工具，任务、Cron、Team 和 MCP 工具按本地关键词按需加入；
+- 上下文达到 70%/85%/95% 预算时，依次压缩旧工具结果、裁剪历史和生成状态摘要；
+- 指标写入 `.token_usage/usage-YYYY-MM-DD.jsonl`，浏览器 Trace 展示会话累计输入、输出、cache read/create 和命中率；
+- 兼容网关不支持 `cache_control` 时会自动降级为普通 Messages API 请求。
+
+可通过 `.env` 调整 `PROMPT_CACHE_ENABLED`、`PROMPT_CACHE_TTL`、三个上下文阈值、`KEEP_RECENT_TOOL_RESULTS` 和 `TRACE_FULL_PAYLOAD`。默认 Trace 只保存 prompt hash、长度、工具名称及 token 指标，避免重复保存完整模型输入。

@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from .config import WORKDIR
+from .workspace import current_workdir
 from .tasks import CURRENT_TODOS, assignment_cwd
 
 # -- Basic Tools --
@@ -563,6 +564,11 @@ def run_glob(pattern: str, cwd: Path | None = None) -> str:
 
 
 def _agent_cwd() -> tuple[Path | None, str | None]:
+    # Web conversations select a context-local workspace; CLI/task worktrees
+    # continue to use the durable assignment registry as a fallback.
+    active = current_workdir()
+    if active != WORKDIR:
+        return active, None
     try:
         return assignment_cwd("agent"), None
     except (FileNotFoundError, ValueError) as exc:
